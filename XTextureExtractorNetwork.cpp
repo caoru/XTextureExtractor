@@ -23,15 +23,29 @@
 #undef UNICODE
 #define WIN32_LEAN_AND_MEAN
 
+#ifdef IBM
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#else /* IBM */
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <unistd.h>
+#include <strings.h>
+#include <errno.h>
+#include <pthread.h>
+#endif /* IBM */
 #include <stdlib.h>
 #include <stdio.h>
 #include <list>
 
+#ifdef IBM
 #pragma comment (lib, "Ws2_32.lib")
+#endif /* IBM */
 
+#include "XPLMDisplay.h"
 #include "XTextureExtractor.h"
 #include <vector>
 using namespace std;
@@ -41,7 +55,11 @@ int last_cockpit_texture_seq = -2; // Track when the aircraft changes, and resta
 
 unsigned char sub_buffer[MAX_TEXTURE_WIDTH * MAX_TEXTURE_HEIGHT * 4]; // Ensure we definitely have enough space for 4-byte RGBA images of any supported size
 
+#ifdef IBM
 std::list<SOCKET> connections;
+#else /* IBM */
+std::list<int> connections;
+#endif /* IBM */
 char header[TCP_INTRO_HEADER];
 
 void recompute_header() {
@@ -57,13 +75,23 @@ void recompute_header() {
 	hptr += sprintf(hptr, "__EOF__\n");
 }
 
+#ifdef IBM
 DWORD WINAPI TCPListenerFunction(LPVOID lpParam)
+#else /* IBM */
+void *TCPListenerFunction(void *lpParam)
+#endif /* IBM */
 {
 	log_printf("Start of threaded TCP listener code\n");
+#ifdef IBM
 	WSADATA wsaData;
+#endif /* IBM */
 	int iResult;
 
+#ifdef IBM
 	SOCKET ListenSocket = INVALID_SOCKET;
+#else /* IBM */
+	int ListenSocket = -1;
+#endif /* IBM */
 
 	struct addrinfo *result = NULL;
 	struct addrinfo hints;
@@ -74,13 +102,19 @@ DWORD WINAPI TCPListenerFunction(LPVOID lpParam)
 	recompute_header();
 	last_cockpit_texture_seq = cockpit_texture_seq;
 
+#ifdef IBM
 	iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
 	if (iResult != 0) {
 		log_printf("Fatal: WSAStartup failed with error: %d\n", iResult);
 		return 1;
 	}
+#endif /* IBM */
 
+#ifdef IBM
 	ZeroMemory(&hints, sizeof(hints));
+#else /* IBM */
+	bzero(&hints, sizeof(hints));
+#endif /* IBM */
 	hints.ai_family = AF_INET;
 	hints.ai_socktype = SOCK_STREAM;
 	hints.ai_protocol = IPPROTO_TCP;
@@ -90,19 +124,32 @@ DWORD WINAPI TCPListenerFunction(LPVOID lpParam)
 	iResult = getaddrinfo(NULL, TCP_PLUGIN_PORT, &hints, &result);
 	if (iResult != 0) {
 		log_printf("Fatal: getaddrinfo failed with error: %d\n", iResult);
+#ifdef IBM
 		WSACleanup();
 		return 1;
+#else /* IBM */
+		return NULL;
+#endif /* IBM */
 	}
 
 	ListenSocket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+#ifdef IBM
 	if (ListenSocket == INVALID_SOCKET) {
 		log_printf("Fatal: socket failed with error: %ld\n", WSAGetLastError());
 		freeaddrinfo(result);
 		WSACleanup();
 		return 1;
 	}
+#else /* IBM */
+	if (ListenSocket < 0) {
+		log_printf("Fatal: socket failed with error: %d\n", errno);
+		freeaddrinfo(result);
+		return NULL;
+	}
+#endif /* IBM */
 
 	iResult = bind(ListenSocket, result->ai_addr, (int)result->ai_addrlen);
+#ifdef IBM
 	if (iResult == SOCKET_ERROR) {
 		log_printf("Fatal: bind failed with error: %d\n", WSAGetLastError());
 		freeaddrinfo(result);
@@ -110,18 +157,35 @@ DWORD WINAPI TCPListenerFunction(LPVOID lpParam)
 		WSACleanup();
 		return 1;
 	}
+#else /* IBM */
+	if (iResult < 0) {
+		log_printf("Fatal: bind failed with error: %d\n", errno);
+		freeaddrinfo(result);
+		close(ListenSocket);
+    return NULL;
+	}
+#endif /* IBM */
 
 	freeaddrinfo(result);
 
 	iResult = listen(ListenSocket, SOMAXCONN);
+#ifdef IBM
 	if (iResult == SOCKET_ERROR) {
 		log_printf("Fatal: listen failed with error: %d\n", WSAGetLastError());
 		closesocket(ListenSocket);
 		WSACleanup();
 		return 1;
 	}
+#else /* IBM */
+	if (iResult < 0) {
+		log_printf("Fatal: listen failed with error: %d\n", errno);
+		close(ListenSocket);
+		return NULL;
+	}
+#endif /* IBM */
 
-	u_long non_block = 1;
+	//u_long non_block = 1;
+#ifdef IBM
 	iResult = ioctlsocket(ListenSocket, FIONBIO, &non_block);
 	if (iResult == SOCKET_ERROR) {
 		log_printf("Fatal: failed to set non-blocking mode on listen socket: %d\n", WSAGetLastError());
@@ -129,13 +193,26 @@ DWORD WINAPI TCPListenerFunction(LPVOID lpParam)
 		WSACleanup();
 		return 1;
 	}
+#else /* IBM */
+	iResult = fcntl(ListenSocket, F_SETFL, O_NONBLOCK);
+	if (iResult < 0) {
+		log_printf("Fatal: failed to set non-blocking mode on listen socket: %d\n", errno);
+		close(ListenSocket);
+		return NULL;
+	}
+#endif /* IBM */
 
 	log_printf("Waiting for incoming TCP connections on port %s\n", TCP_PLUGIN_PORT);
 
 	while (1) {
 		// Check if there are any new connections, it is ok to not have any new ones and just maintain what we have
+#ifdef IBM
 		SOCKET newClientSocket = INVALID_SOCKET;
+#else /* IBM */
+		int newClientSocket = -1;
+#endif /* IBM */
 		newClientSocket = accept(ListenSocket, NULL, NULL);
+#ifdef IBM
 		if (newClientSocket == INVALID_SOCKET) {
 			// See if the error was fatal or no new connection
 			if (WSAGetLastError() != WSAEWOULDBLOCK) {
@@ -144,18 +221,36 @@ DWORD WINAPI TCPListenerFunction(LPVOID lpParam)
 				WSACleanup();
 				return 1;
 			}
+#else /* IBM */
+		if (newClientSocket < 0) {
+			// See if the error was fatal or no new connection
+			if (errno != EWOULDBLOCK) {
+				log_printf("Fatal: accept failed with error: %d\n", errno);
+				close(ListenSocket);
+				return NULL;
+			}
+#endif /* IBM */
 
 			// If we don't have any connections, then lets sleep to rate limit this thread and loop around
 			if (connections.size() == 0) {
 				// log_printf("No incoming connection found, sleeping for 1 second ...\n");
+#ifdef IBM
 				Sleep(1000);
+#else /* IBM */
+				usleep(1000);
+#endif /* IBM */
 				continue;
 			}
 		}
 		else {
 			int iOptVal = TCP_SEND_BUFFER; // Make sure this is very large to prevent WSAEWOULDBLOCK=10035 when the network gets clogged up
+#ifdef IBM
 			int iOptLen = sizeof(int);
+#else /* IBM */
+			socklen_t iOptLen = sizeof(int);
+#endif /* IBM */
 			iResult = setsockopt(newClientSocket, SOL_SOCKET, SO_SNDBUF, (char *)&iOptVal, iOptLen);
+#ifdef IBM
 			if (iResult == SOCKET_ERROR) {
 				log_printf("Fatal: failed to set SO_SNDBUF to %d: %d\n", TCP_SEND_BUFFER, WSAGetLastError());
 				closesocket(newClientSocket);
@@ -164,7 +259,17 @@ DWORD WINAPI TCPListenerFunction(LPVOID lpParam)
 				WSACleanup();
 				return 1;
 			}
+#else /* IBM */
+			if (iResult < 0) {
+				log_printf("Fatal: failed to set SO_SNDBUF to %d: %d\n", TCP_SEND_BUFFER, errno);
+				close(newClientSocket);
+				for (auto s : connections)
+					close(s);
+				return NULL;
+			}
+#endif /* IBM */
 			iResult = getsockopt(newClientSocket, SOL_SOCKET, SO_SNDBUF, (char *)&iOptVal, &iOptLen);
+#ifdef IBM
 			if (iResult == SOCKET_ERROR) {
 				log_printf("Fatal: failed to query SO_SNDBUF: %d\n", WSAGetLastError());
 				closesocket(newClientSocket);
@@ -173,8 +278,19 @@ DWORD WINAPI TCPListenerFunction(LPVOID lpParam)
 				WSACleanup();
 				return 1;
 			}
+#else /* IBM */
+			if (iResult < 0) {
+				log_printf("Fatal: failed to query SO_SNDBUF: %d\n", errno);
+				close(newClientSocket);
+				for (auto s : connections)
+					close(s);
+				return NULL;
+			}
+#endif /* IBM */
 
 			u_long non_block = 0;
+
+#ifdef IBM
 			iResult = ioctlsocket(newClientSocket, FIONBIO, &non_block);
 			if (iResult == SOCKET_ERROR) {
 				log_printf("Fatal: failed to set blocking mode on socket: %d\n", WSAGetLastError());
@@ -184,10 +300,21 @@ DWORD WINAPI TCPListenerFunction(LPVOID lpParam)
 				WSACleanup();
 				return 1;
 			}
+#else /* IBM */
+	    iResult = fcntl(newClientSocket, F_SETFL, &non_block);
+			if (iResult < 0) {
+				log_printf("Fatal: failed to set blocking mode on socket: %d\n", errno);
+				close(newClientSocket);
+				for (auto s : connections)
+					close(s);
+				return NULL;
+			}
+#endif /* IBM */
 
 			log_printf("Accepted new connection, texture seq is %d, total connections is %zu, SO_SNDBUF is %d from %d\n", cockpit_texture_seq, connections.size(), iOptVal, TCP_SEND_BUFFER);
 
 			iSendResult = send(newClientSocket, header, TCP_INTRO_HEADER, 0);
+#ifdef IBM
 			if (iSendResult == SOCKET_ERROR) {
 				log_printf("TCP header send failed with code %d for %d bytes, closing this socket down\n", WSAGetLastError(), TCP_INTRO_HEADER);
 				closesocket(newClientSocket);
@@ -199,6 +326,18 @@ DWORD WINAPI TCPListenerFunction(LPVOID lpParam)
 				WSACleanup();
 				return 1;
 			}
+#else /* IBM */
+			if (iSendResult < 0) {
+				log_printf("TCP header send failed with code %d for %d bytes, closing this socket down\n", errno, TCP_INTRO_HEADER);
+				close(newClientSocket);
+			}
+			else if (iSendResult != TCP_INTRO_HEADER) {
+				log_printf("Fatal: TCP transmission was %d bytes but expected to send %d bytes\n", iSendResult, TCP_INTRO_HEADER);
+				for (auto s : connections)
+					close(s);
+				return NULL;
+			}
+#endif /* IBM */
 			else {
 				// log_printf("Successfully sent header of %d bytes\n", TCP_INTRO_HEADER);
 				connections.push_back(newClientSocket);
@@ -211,7 +350,11 @@ DWORD WINAPI TCPListenerFunction(LPVOID lpParam)
 		if (last_cockpit_texture_seq != cockpit_texture_seq) {
 			log_printf("Network: Texture sequence number has increased from %d to %d, so closing all connections to force restart\n", last_cockpit_texture_seq, cockpit_texture_seq);
 			for (auto s : connections)
+#ifdef IBM
 				closesocket(s);
+#else /* IBM */
+				close(s);
+#endif /* IBM */
 			connections.clear();
 			recompute_header();
 		}
@@ -219,12 +362,20 @@ DWORD WINAPI TCPListenerFunction(LPVOID lpParam)
 
 		if (cockpit_texture_id <= 0) {
 			log_printf("No texture is currently found, nothing to transmit ... sleeping for 1 second\n");
+#ifdef IBM
 			Sleep(1000);
+#else /* IBM */
+			usleep(1000);
+#endif /* IBM */
 			continue;
 		}
 		else if (texture_pointer == NULL) {
 			// log_printf("Texture id is valid but no texture is ready, will wait 10 msec\n");
+#ifdef IBM
 			Sleep(10); // Cannot ever exceed 100 fps
+#else /* IBM */
+			usleep(10); // Cannot ever exceed 100 fps
+#endif /* IBM */
 			continue;
 		}
 
@@ -275,7 +426,7 @@ DWORD WINAPI TCPListenerFunction(LPVOID lpParam)
 			state.info_png.color.colortype = LCT_RGB; // Output type
 			state.info_png.color.bitdepth = 8;
 			state.encoder.auto_convert = 0; // Must provide this or will ignore the input/output types
-			unsigned error = lodepng::encode(png_data, &sub_buffer[0], x2 - x1, -(y2 - y1), state);
+			//unsigned error = lodepng::encode(png_data, &sub_buffer[0], x2 - x1, -(y2 - y1), state);
 
 			// 7 char header and 1 byte for the window id (8 bytes total)
 			out_data.insert(out_data.end(), '!');
@@ -310,17 +461,30 @@ DWORD WINAPI TCPListenerFunction(LPVOID lpParam)
 		for (auto s = connections.begin(); s != connections.end(); ) {
 			// log_printf("Sending PNG data to socket %zu\n", *s);
 			iSendResult = send(*s, (const char *)out_data.data(), (int)out_data.size(), 0);
+#ifdef IBM
 			if (iSendResult == SOCKET_ERROR) {
 				log_printf("Connection closed: TCP PNG send of %zu bytes failed with code %d\n", out_data.size(), WSAGetLastError());
 				closesocket(*s);
 				s = connections.erase(s); // Increment iterator
 			}
+#else /* IBM */
+			if (iSendResult < 0) {
+				log_printf("Connection closed: TCP PNG send of %zu bytes failed with code %d\n", out_data.size(), errno);
+				close(*s);
+				s = connections.erase(s); // Increment iterator
+			}
+#endif /* IBM */
 			else if (iSendResult != out_data.size()) {
 				log_printf("Fatal: TCP transmission was %d bytes but expected to send %zu bytes\n", iSendResult, out_data.size());
 				for (auto s : connections)
+#ifdef IBM
 					closesocket(s);
 				WSACleanup();
 				return 1;
+#else /* IBM */
+					close(s);
+				return NULL;
+#endif /* IBM */
 			}
 			else {
 				// log_printf("Successfully sent PNG image of %dx%d with %d compressed bytes\n", cockpit_texture_width, cockpit_texture_height, iSendResult);
@@ -330,13 +494,20 @@ DWORD WINAPI TCPListenerFunction(LPVOID lpParam)
 	}
 
 	// Unreachable code - shut down everything
+#ifdef IBM
 	closesocket(ListenSocket);
 	WSACleanup();
 
 	return 0;
+#else /* IBM */
+	close(ListenSocket);
+
+	return NULL;
+#endif /* IBM */
 }
 
 void start_networking_thread(void) {
+#ifdef IBM
 	CreateThread(
 		NULL,                   // default security attributes
 		0,                      // use default stack size  
@@ -344,4 +515,12 @@ void start_networking_thread(void) {
 		NULL,          // argument to thread function 
 		0,                      // use default creation flags 
 		NULL);   // returns the thread identifier 
+#else /* IBM */
+  pthread_t pid;
+	pthread_create(
+		&pid,
+		NULL,
+		TCPListenerFunction,
+		NULL);
+#endif /* IBM */
 }

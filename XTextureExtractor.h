@@ -20,7 +20,7 @@
 //
 // ---------------------------------------------------------------------
 
-#pragma once
+//#pragma once
 
 #include "XPLMDisplay.h"
 #include "XPLMGraphics.h"
@@ -46,7 +46,19 @@
 #endif
 
 static char __log_printf_buffer[4096];
+#if APL
+#define log_printf(fmt, ...) snprintf(__log_printf_buffer, 4096, "XTextureExtractor: " fmt, ##__VA_ARGS__), XPLMDebugString(__log_printf_buffer)
+#else
 #define log_printf(fmt, ...) snprintf(__log_printf_buffer, 4096, "XTextureExtractor: " fmt, __VA_ARGS__), XPLMDebugString(__log_printf_buffer)
+#endif
+
+#ifdef IBM
+#define PATH_DELIMITER_C    '\\'
+#define PATH_DELIMITER_S    "\\"
+#else /* IBM */
+#define PATH_DELIMITER_C    '/'
+#define PATH_DELIMITER_S    "/"
+#endif /* IBM */
 
 #define COCKPIT_MAX_WINDOWS 20
 #define TCP_PLUGIN_PORT    "52500"

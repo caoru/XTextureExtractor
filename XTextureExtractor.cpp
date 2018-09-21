@@ -21,6 +21,9 @@
 // ---------------------------------------------------------------------
 
 
+#ifndef IBM
+#include <unistd.h>
+#endif /* !IBM */
 #include "XTextureExtractor.h"
 #include <vector>
 using namespace std;
@@ -41,11 +44,27 @@ bool  cockpit_dirty = false;
 bool  cockpit_aircraft_known = false;
 char  cockpit_aircraft_name[256];
 char  cockpit_aircraft_filename[256];
+#ifdef IBM
 char  plugin_path[MAX_PATH];
+#else /* IBM */
+char  plugin_path[PATH_MAX];
+#endif /* IBM */
 int   cockpit_save_count = 0;
 char  cockpit_save_string[32];
 int   cockpit_window_limit = 0;
 
+#ifndef IBM
+char * _strlwr(char *string)
+{
+  int i;
+
+  for(i = 0; string[i]; i++){
+      string[i] = tolower(string[i]);
+  }
+
+  return string;
+}
+#endif /* !IBM */
 
 void detect_aircraft_filename(void) {
 	char filename[256];
@@ -154,13 +173,15 @@ PLUGIN_API int XPluginStart(
 						char *		outDesc)
 {
 	XPLMGetPluginInfo(XPLMGetMyID(), NULL, plugin_path, NULL, NULL);
-	char *slash = strrchr(plugin_path, '\\'); // Chop off the filename so we can get the path
+	char *slash = strrchr(plugin_path, PATH_DELIMITER_C); // Chop off the filename so we can get the path
 	if (slash != NULL) {
 		*slash = '\0';
 	} else {
-		log_printf("The XPLMGetPluginInfo returned did not contain \\64\\win.xpl as expected [%s]\n", plugin_path);
+		log_printf("The XPLMGetPluginInfo returned did not contain %c64%cwin.xpl as expected [%s]\n", PATH_DELIMITER_C, PATH_DELIMITER_C, plugin_path);
 	}
-	strcat(plugin_path, "\\..\\");
+	strcat(plugin_path, PATH_DELIMITER_S);
+	strcat(plugin_path, "..");
+	strcat(plugin_path, PATH_DELIMITER_S);
 
 	strcpy(outName, "XTextureExtractorPlugin");
 	strcpy(outSig, "net.waynepiekarski.windowcockpitplugin");
@@ -259,7 +280,7 @@ void save_png(GLint texId)
 	state.info_png.color.colortype = LCT_RGB; // Output type
 	state.info_png.color.bitdepth = 8;
 	state.encoder.auto_convert = 0; // Must provide this or will ignore the input/output types
-	unsigned error = lodepng::encode(png, flipped, tw, th, state);
+	//unsigned error = lodepng::encode(png, flipped, tw, th, state);
 
 	FILE *fp = fopen("texture_save.png", "wb");
 	if (fp == NULL) {
@@ -463,7 +484,11 @@ void clear_window_state() {
 	char filename[256];
 	sprintf(filename, "windowcockpit-%s.txt", cockpit_aircraft_name);
 	log_printf("Removing window save file %s\n", filename);
+#ifdef IBM
 	_unlink(filename);
+#else /* IBM */
+	unlink(filename);
+#endif /* IBM */
 }
 
 void save_window_state() {
@@ -510,7 +535,7 @@ void load_window_state() {
 	cockpit_window_limit = 0;
 	cockpit_aircraft_known = false;
 	char texturefile[256];
-	sprintf(texturefile, "%s\\%s.tex", plugin_path, cockpit_aircraft_filename);
+	sprintf(texturefile, "%s%c%s.tex", plugin_path, PATH_DELIMITER_C, cockpit_aircraft_filename);
 	FILE *fp = fopen(texturefile, "rb");
 	if (fp == NULL) {
 		log_printf("Could not load texture data from file %s, this aircraft is unknown\n", texturefile);
