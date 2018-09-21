@@ -98,6 +98,6 @@ FUNCTION(add_xplane_plugin library_name library_version ...)
 
 	TARGET_LINK_LIBRARIES(${library_name} PUBLIC ${XPLM_LIBRARY} ${XPWIDGETS_LIBRARY} ${OPENGL_LIBRARIES})
   TARGET_INCLUDE_DIRECTORIES(${library_name} PUBLIC "${XPLANE_INCLUDES_PATH}/XPLM" "${XPLANE_INCLUDES_PATH}/Widgets" "${XPLANE_INCLUDES_PATH}/Wrappers")
-  install(TARGETS ${library_name} DESTINATION ${XPLANE_PATH}/Resources/plugins/${library_name})
+  install(TARGETS ${library_name} DESTINATION ${XPLANE_PATH}/Resources/plugins/${library_name}/64)
 ENDFUNCTION(add_xplane_plugin)
 
